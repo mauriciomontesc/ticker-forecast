@@ -9,7 +9,6 @@ mod models;
 mod traits;
 
 use anyhow::Result;
-use tracing_subscriber;
 
 use crate::db::Database;
 use crate::traits::PriceRepository;
@@ -19,8 +18,7 @@ use models::PriceData;
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .without_time()
         .init();
