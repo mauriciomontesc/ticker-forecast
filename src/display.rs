@@ -17,6 +17,15 @@ pub fn print_forecast(forecast: &Forecast, symbol: &str) {
     info!("Histograma: {:.5}", hist);
     info!("RSI (14): {:.1}", s.rsi);
     info!("ADX (14): {:.1}", s.adx);
+    info!("Bollinger %B: {:.3}", s.bollinger_b);
+    info!("Bollinger BW: {:.4}", s.bollinger_bandwidth);
+    info!("Stochastic %K (14): {:.1}", s.stochastic_k);
+    if let Some(sup) = s.nearest_support {
+        info!("Soporte cercano: ${:.5}", sup);
+    }
+    if let Some(res) = s.nearest_resistance {
+        info!("Resistencia cercana: ${:.5}", res);
+    }
 
     let direction = match forecast.direction {
         crate::models::Direction::Bullish => "Subida (Bullish)",

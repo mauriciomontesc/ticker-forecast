@@ -42,6 +42,11 @@ pub struct IndicatorSignals {
     pub rsi_bullish: bool,
     pub adx: f64,
     pub trending: bool,
+    pub bollinger_b: f64,
+    pub bollinger_bandwidth: f64,
+    pub stochastic_k: f64,
+    pub nearest_support: Option<f64>,
+    pub nearest_resistance: Option<f64>,
 }
 
 #[derive(Debug, Clone)]

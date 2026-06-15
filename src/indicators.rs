@@ -327,6 +327,171 @@ pub fn compute_obv(close: &[f64], volume: &[i64]) -> Vec<Option<f64>> {
     result
 }
 
+pub fn bollinger_bands(closes: &[f64], period: usize, num_std: f64) -> Option<(f64, f64, f64)> {
+    if closes.len() < period { return None; }
+    let slice = &closes[closes.len() - period..];
+    let mean = slice.iter().sum::<f64>() / period as f64;
+    let variance = slice.iter().map(|&c| (c - mean).powi(2)).sum::<f64>() / period as f64;
+    let std = variance.sqrt();
+    Some((mean + num_std * std, mean, mean - num_std * std))
+}
+
+pub fn bollinger_bands_series(closes: &[f64], period: usize, num_std: f64) -> (Vec<Option<f64>>, Vec<Option<f64>>, Vec<Option<f64>>) {
+    let n = closes.len();
+    let mut upper = vec![None; n];
+    let mut middle = vec![None; n];
+    let mut lower = vec![None; n];
+    if n < period { return (upper, middle, lower); }
+    let mut sum = closes[..period].iter().sum::<f64>();
+    let mut sum_sq = closes[..period].iter().map(|&c| c * c).sum::<f64>();
+    macro_rules! emit {
+        ($i:expr) => {{
+            let m = sum / period as f64;
+            let v = (sum_sq / period as f64 - m * m).max(0.0);
+            let s = v.sqrt();
+            upper[$i] = Some(m + num_std * s);
+            middle[$i] = Some(m);
+            lower[$i] = Some(m - num_std * s);
+        }};
+    }
+    emit!(period - 1);
+    for i in period..n {
+        sum += closes[i] - closes[i - period];
+        sum_sq += closes[i] * closes[i] - closes[i - period] * closes[i - period];
+        emit!(i);
+    }
+    (upper, middle, lower)
+}
+
+pub fn bollinger_b_percent(closes: &[f64], period: usize, num_std: f64) -> Option<f64> {
+    let (upper, _, lower) = bollinger_bands(closes, period, num_std)?;
+    let price = *closes.last()?;
+    if upper == lower { return Some(0.5); }
+    Some((price - lower) / (upper - lower))
+}
+
+pub fn bollinger_b_percent_series(closes: &[f64], period: usize, num_std: f64) -> Vec<Option<f64>> {
+    let (upper, _, lower) = bollinger_bands_series(closes, period, num_std);
+    closes.iter().enumerate().map(|(i, &c)| {
+        match (upper[i], lower[i]) {
+            (Some(u), Some(l)) if u != l => Some((c - l) / (u - l)),
+            _ => None,
+        }
+    }).collect()
+}
+
+#[allow(dead_code)]
+pub fn bollinger_bandwidth(closes: &[f64], period: usize, num_std: f64) -> Option<f64> {
+    let (upper, middle, lower) = bollinger_bands(closes, period, num_std)?;
+    if middle == 0.0 { return None; }
+    Some((upper - lower) / middle)
+}
+
+#[allow(dead_code)]
+pub fn bollinger_bandwidth_series(closes: &[f64], period: usize, num_std: f64) -> Vec<Option<f64>> {
+    let (upper, middle, lower) = bollinger_bands_series(closes, period, num_std);
+    upper.iter().zip(middle.iter().zip(lower.iter())).map(|(&u, (&m, &l))| {
+        match (u, m, l) {
+            (Some(u), Some(m), Some(l)) if m != 0.0 => Some((u - l) / m),
+            _ => None,
+        }
+    }).collect()
+}
+
+pub fn stochastic(high: &[f64], low: &[f64], close: &[f64], k_period: usize) -> Option<f64> {
+    let n = close.len();
+    if n < k_period { return None; }
+    let highest = high[n - k_period..].iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let lowest = low[n - k_period..].iter().cloned().fold(f64::INFINITY, f64::min);
+    if highest == lowest { return Some(50.0); }
+    Some(100.0 * (close[n - 1] - lowest) / (highest - lowest))
+}
+
+pub fn stochastic_series(high: &[f64], low: &[f64], close: &[f64], k_period: usize) -> Vec<Option<f64>> {
+    let n = close.len();
+    let mut result = vec![None; n];
+    if n < k_period { return result; }
+    for i in (k_period - 1)..n {
+        let h = high[i + 1 - k_period..=i].iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let l = low[i + 1 - k_period..=i].iter().cloned().fold(f64::INFINITY, f64::min);
+        result[i] = if h != l {
+            Some(100.0 * (close[i] - l) / (h - l))
+        } else {
+            Some(50.0)
+        };
+    }
+    result
+}
+
+pub fn local_minima(values: &[f64], window: usize) -> Vec<(usize, f64)> {
+    let n = values.len();
+    let mut result = Vec::new();
+    for i in window..n.saturating_sub(window) {
+        let v = values[i];
+        let mut is_min = true;
+        for j in (i - window)..=(i + window) {
+            if j != i && values[j] <= v { is_min = false; break; }
+        }
+        if is_min { result.push((i, v)); }
+    }
+    result
+}
+
+pub fn local_maxima(values: &[f64], window: usize) -> Vec<(usize, f64)> {
+    let n = values.len();
+    let mut result = Vec::new();
+    for i in window..n.saturating_sub(window) {
+        let v = values[i];
+        let mut is_max = true;
+        for j in (i - window)..=(i + window) {
+            if j != i && values[j] >= v { is_max = false; break; }
+        }
+        if is_max { result.push((i, v)); }
+    }
+    result
+}
+
+pub fn cluster_levels(mut levels: Vec<(usize, f64)>, pct_threshold: f64) -> Vec<(f64, usize)> {
+    if levels.is_empty() { return vec![]; }
+    levels.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    let mut sum = levels[0].1;
+    let mut count = 1;
+    let mut clustered: Vec<(f64, usize)> = Vec::new();
+    for &(_, price) in &levels[1..] {
+        let avg = sum / count as f64;
+        if (price - avg).abs() / avg.max(1e-10) <= pct_threshold {
+            sum += price;
+            count += 1;
+        } else {
+            clustered.push((avg, count));
+            sum = price;
+            count = 1;
+        }
+    }
+    clustered.push((sum / count as f64, count));
+    clustered
+}
+
+pub fn support_resistance(high: &[f64], low: &[f64], window: usize, pct_threshold: f64) -> (Vec<(f64, usize)>, Vec<(f64, usize)>) {
+    let supports = local_minima(low, window);
+    let resistances = local_maxima(high, window);
+    (cluster_levels(supports, pct_threshold), cluster_levels(resistances, pct_threshold))
+}
+
+pub fn nearest_level_below(levels: &[(f64, usize)], price: f64) -> Option<f64> {
+    levels.iter()
+        .filter(|&&(p, _)| p < price)
+        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+        .map(|&(p, _)| p)
+}
+
+pub fn nearest_level_above(levels: &[(f64, usize)], price: f64) -> Option<f64> {
+    levels.iter()
+        .filter(|&&(p, _)| p > price)
+        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+        .map(|&(p, _)| p)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,5 +627,93 @@ mod tests {
         let adx_single = compute_adx(&highs, &lows, &closes, 14);
         let adx_series = compute_adx_series(&highs, &lows, &closes, 14);
         assert_eq!(adx_series[last], adx_single);
+    }
+
+    #[test]
+    fn test_bollinger_bands_constant() {
+        let closes = vec![100.0; 50];
+        let bands = bollinger_bands(&closes, 20, 2.0);
+        assert!(bands.is_some());
+        let (upper, mid, lower) = bands.unwrap();
+        assert!((upper - mid).abs() < 1e-10);
+        assert!((mid - lower).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_bollinger_bands_short_data() {
+        let closes = vec![100.0; 10];
+        assert!(bollinger_bands(&closes, 20, 2.0).is_none());
+    }
+
+    #[test]
+    fn test_bollinger_b_percent_limits() {
+        let closes: Vec<f64> = (0..50).map(|i| 100.0 + (i as f64).sin() * 10.0).collect();
+        let bb = bollinger_b_percent(&closes, 20, 2.0);
+        assert!(bb.is_some());
+        let v = bb.unwrap();
+        assert!(v >= 0.0 && v <= 1.0);
+    }
+
+    #[test]
+    fn test_bollinger_series_matches_single() {
+        let closes: Vec<f64> = (0..100).map(|i| 100.0 + (i as f64).sin()).collect();
+        let single = bollinger_b_percent(&closes, 20, 2.0);
+        let series = bollinger_b_percent_series(&closes, 20, 2.0);
+        let last = series.last().unwrap();
+        assert!((last.unwrap() - single.unwrap()).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_stochastic_constant() {
+        let high = vec![110.0; 30];
+        let low = vec![90.0; 30];
+        let close = vec![100.0; 30];
+        let k = stochastic(&high, &low, &close, 14);
+        assert!(k.is_some());
+        assert!((k.unwrap() - 50.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_stochastic_overbought() {
+        let mut high = vec![110.0];
+        let mut low = vec![80.0];
+        let mut close = vec![105.0];
+        for i in 0..20 {
+            high.push(110.0 + i as f64);
+            low.push(80.0 + i as f64 * 0.5);
+            close.push(109.0 + i as f64);
+        }
+        let k = stochastic(&high, &low, &close, 14);
+        assert!(k.is_some());
+        assert!(k.unwrap() > 80.0);
+    }
+
+    #[test]
+    fn test_stochastic_short_data() {
+        assert!(stochastic(&[100.0], &[90.0], &[95.0], 14).is_none());
+    }
+
+    #[test]
+    fn test_local_minima_and_maxima() {
+        let values = vec![1.0, 2.0, 1.5, 3.0, 2.0, 4.0, 3.0, 5.0, 4.0];
+        let mins = local_minima(&values, 1);
+        assert!(!mins.is_empty());
+        let maxs = local_maxima(&values, 1);
+        assert!(!maxs.is_empty());
+    }
+
+    #[test]
+    fn test_cluster_levels_merges_close() {
+        let levels = vec![(0usize, 100.0f64), (1, 100.5), (2, 101.0)];
+        let clustered = cluster_levels(levels, 0.01);
+        assert_eq!(clustered.len(), 1);
+        assert_eq!(clustered[0].1, 3);
+    }
+
+    #[test]
+    fn test_nearest_level() {
+        let levels = vec![(95.0f64, 1usize), (98.0, 1), (105.0, 1), (110.0, 1)];
+        assert_eq!(nearest_level_below(&levels, 100.0), Some(98.0));
+        assert_eq!(nearest_level_above(&levels, 100.0), Some(105.0));
     }
 }

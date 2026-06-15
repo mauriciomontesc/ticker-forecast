@@ -3,7 +3,7 @@ use crate::models::PriceData;
 use crate::traits::PriceRepository;
 use serde::{Deserialize, Serialize};
 
-const FEATURE_COUNT: usize = 11;
+const FEATURE_COUNT: usize = 13;
 const MIN_TRAIN_SAMPLES: usize = 10;
 const EPOCHS: usize = 2000;
 const L2_REG: f64 = 0.01;
@@ -71,6 +71,8 @@ pub fn build_dataset(data: &PriceData) -> Dataset {
     let ret21 = indicators::compute_return_series(&data.closes, 21);
     let vol_21 = indicators::compute_rolling_volatility(&data.closes, 21);
     let obv = indicators::compute_obv(&data.closes, &data.volume);
+    let bb_series = indicators::bollinger_b_percent_series(&data.closes, 20, 2.0);
+    let stoch_series = indicators::stochastic_series(&data.highs, &data.lows, &data.closes, 14);
 
     let mut features = Vec::new();
     let mut labels = Vec::new();
@@ -86,8 +88,10 @@ pub fn build_dataset(data: &PriceData) -> Dataset {
                 let lr21 = ret21[i].unwrap_or(0.0);
                 let v21 = vol_21[i].unwrap_or(0.0);
                 let obv_val = obv[i].unwrap_or(0.0);
+                let bb = bb_series[i].unwrap_or(0.5);
+                let sk = stoch_series[i].unwrap_or(50.0);
 
-                features.push(vec![m, s, m - s, r, a, atr_norm, lr1, lr5, lr21, v21, obv_val]);
+                features.push(vec![m, s, m - s, r, a, atr_norm, lr1, lr5, lr21, v21, obv_val, bb, sk]);
                 labels.push(if data.closes[i + 1] > data.closes[i] { 1.0 } else { 0.0 });
                 timestamps.push(data.timestamps[i]);
             }
@@ -225,6 +229,8 @@ fn latest_features(data: &PriceData) -> Option<Vec<f64>> {
     let ret21 = indicators::compute_return_series(&data.closes, 21);
     let vol_21 = indicators::compute_rolling_volatility(&data.closes, 21);
     let obv = indicators::compute_obv(&data.closes, &data.volume);
+    let bb = indicators::bollinger_b_percent(&data.closes, 20, 2.0);
+    let sk = indicators::stochastic(&data.highs, &data.lows, &data.closes, 14);
 
     let last = data.closes.len() - 1;
     let atr_norm = atr_val.unwrap_or(0.0) / data.closes[last].max(1e-10);
@@ -236,7 +242,7 @@ fn latest_features(data: &PriceData) -> Option<Vec<f64>> {
 
     match (macd_line, signal, rsi_val, adx_val) {
         (Some(m), Some(s), Some(r), Some(a)) => {
-            Some(vec![m, s, m - s, r, a, atr_norm, lr1, lr5, lr21, v21, obv_val])
+            Some(vec![m, s, m - s, r, a, atr_norm, lr1, lr5, lr21, v21, obv_val, bb.unwrap_or(0.5), sk.unwrap_or(50.0)])
         }
         _ => None,
     }

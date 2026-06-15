@@ -22,6 +22,18 @@ fn compute_signals(data: &PriceData) -> (IndicatorSignals, f64, f64) {
         indicators::compute_adx(&data.highs, &data.lows, &data.closes, ADX_PERIOD).unwrap_or(0.0);
     let trending = adx > 25.0;
 
+    let bollinger_b = indicators::bollinger_b_percent(&data.closes, 20, 2.0).unwrap_or(0.5);
+    let bollinger_bw = indicators::bollinger_bandwidth(&data.closes, 20, 2.0).unwrap_or(0.0);
+
+    let stochastic_k = indicators::stochastic(&data.highs, &data.lows, &data.closes, 14).unwrap_or(50.0);
+
+    let (supports, resistances) = indicators::support_resistance(&data.highs, &data.lows, 10, 0.005);
+    let latest = *data.closes.last().unwrap_or(&0.0);
+    let near_support = indicators::nearest_level_below(&supports, latest);
+    let near_resistance = indicators::nearest_level_above(&resistances, latest);
+    let nearest_support = near_support;
+    let nearest_resistance = near_resistance;
+
     let signals = IndicatorSignals {
         macd_bullish,
         macd_line: macd_line.unwrap_or(0.0),
@@ -30,6 +42,11 @@ fn compute_signals(data: &PriceData) -> (IndicatorSignals, f64, f64) {
         rsi_bullish,
         adx,
         trending,
+        bollinger_b,
+        bollinger_bandwidth: bollinger_bw,
+        stochastic_k,
+        nearest_support,
+        nearest_resistance,
     };
 
     let mut bullish = 0.0;
@@ -43,6 +60,31 @@ fn compute_signals(data: &PriceData) -> (IndicatorSignals, f64, f64) {
         bullish += rsi_weight;
     } else {
         bearish += rsi_weight;
+    }
+
+    let bb_weight = (bollinger_b - 0.5).abs() * 0.4;
+    if bollinger_b < 0.5 {
+        bullish += bb_weight;
+    } else {
+        bearish += bb_weight;
+    }
+
+    let stoch_weight = (stochastic_k - 50.0).abs() / 50.0 * 0.3;
+    if stochastic_k < 50.0 {
+        bullish += stoch_weight;
+    } else {
+        bearish += stoch_weight;
+    }
+
+    if let Some(sup) = nearest_support {
+        let dist = (latest - sup) / latest;
+        if dist < 0.02 { bullish += 0.4; }
+        else if dist < 0.05 { bullish += 0.2; }
+    }
+    if let Some(res) = nearest_resistance {
+        let dist = (res - latest) / latest;
+        if dist < 0.02 { bearish += 0.4; }
+        else if dist < 0.05 { bearish += 0.2; }
     }
 
     (signals, bullish, bearish)
