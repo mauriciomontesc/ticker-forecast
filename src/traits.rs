@@ -3,10 +3,12 @@ use anyhow::Result;
 use crate::models::PriceData;
 
 pub trait PriceRepository {
-    fn load_cached(&self, symbol: &str) -> Result<Option<PriceData>>;
+    fn load_cached(&self, symbol: &str, range: &str, interval: &str) -> Result<Option<PriceData>>;
     fn store_ohlcv(
         &mut self,
         symbol: &str,
+        range: &str,
+        interval: &str,
         timestamps: &[i64],
         opens: &[Option<f64>],
         highs: &[Option<f64>],

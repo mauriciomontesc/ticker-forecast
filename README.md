@@ -14,9 +14,9 @@ display.rs    → Output por consola via tracing
 traits.rs     → Abstracción PriceRepository
 ```
 
-## Features del modelo ML (11 dimensiones)
+## Features del modelo ML (13 dimensiones)
 
-Cada sample de entrenamiento es un vector de 11 features extraídas de una ventana de precios histórica. La variable objetivo es `1` si el precio de cierre del día siguiente sube, `0` si baja.
+Cada sample de entrenamiento es un vector de 13 features extraídas de una ventana de precios histórica. La variable objetivo es `1` si el precio de cierre del día siguiente sube, `0` si baja.
 
 | # | Feature | Descripción | Fuente |
 |---|---------|-------------|--------|
@@ -31,10 +31,12 @@ Cada sample de entrenamiento es un vector de 11 features extraídas de una venta
 | 8 | `log_return_21` | ln(close[i] / close[i-21]) | Retornos |
 | 9 | `volatility_21` | Desv. estándar de retornos a 21d | Volatilidad |
 | 10 | `obv` | On-Balance Volume acumulado | Volumen |
+| 11 | `bollinger_b` | Bollinger %B (20, 2σ) | Bollinger |
+| 12 | `stochastic_k` | Stochastic %K (14) | Stochastic |
 
 ### Pre-procesamiento
 
-- **Z-score normalization**: cada feature se normaliza antes de entrenar: `(x - μ) / σ`
+- **Z-score normalization**: cada feature se normaliza con media y desviación calculadas **solo sobre el split de entrenamiento** (80% más antiguo), evitando leakage del test set
 - **Train/test split**: 80/20 preservando orden temporal (no shuffle aleatorio, se usa el 80% más antiguo para entrenar y el 20% más reciente para evaluar)
 - **Mínimo de samples**: 10 (con menos datos no se entrena)
 
@@ -62,6 +64,18 @@ El modelo entrenado se guarda en SQLite (`ml_model` table) como JSON serializado
 
 Si el feature vector cambia (por ej. al agregar nuevas features), se detecta por mismatch en `weights.len()` y se re-entrena automáticamente.
 
+## Caché de datos OHLCV
+
+Los datos descargados se guardan en SQLite (`trade_cache.db`) con clave compuesta:
+
+```
+(symbol, range, interval)
+```
+
+- **TTL**: 3 días, basado en `fetched_at` (momento de la descarga), no en la fecha del último candle
+- **Aislamiento**: datos daily (`1d`) e intraday (`1h`) no se mezclan aunque sea el mismo símbolo
+- **`--refresh`**: fuerza descarga y reemplaza la serie completa para esa clave
+
 ## Sistema de decisión (forecast)
 
 El forecast combina dos fuentes:
@@ -72,10 +86,16 @@ El forecast combina dos fuentes:
 |-------|------|-----------|
 | MACD histogram | `\|histogram\| / (1 + \|histogram\|)` | `macd > signal` → bullish |
 | RSI | `\|rsi - 50\| / 50` | `rsi > 50` → bullish |
+| Bollinger %B | `\|%B - 0.5\| × 0.4` | `%B < 0.5` → bullish |
+| Stochastic %K | `\|K - 50\| / 50 × 0.3` | `K < 50` → bullish |
+| Soporte cercano | `+0.4` si dist < 2%, `+0.2` si dist < 5% | precio cerca de soporte → bullish |
+| Resistencia cercana | `+0.4` si dist < 2%, `+0.2` si dist < 5% | precio cerca de resistencia → bearish |
 
 ADX no vota, solo modula la confianza del mensaje:
 - ADX > 25 → tendencia presente (señales más confiables)
 - ADX < 25 → mercado lateral (señales débiles)
+
+Bollinger bandwidth y niveles S/R se muestran en el output pero solo %B y proximidad S/R participan en la votación.
 
 ### 2. ML (voto ponderado por accuracy)
 
@@ -115,4 +135,4 @@ Ejemplos:
 cargo test
 ```
 
-21 tests unitarios cubren: MACD, RSI, ADX, ATR, retornos, volatilidad, OBV, series de indicadores, forecast ponderado, edge cases con datos insuficientes.
+39 tests unitarios cubren: MACD, RSI, ADX, ATR, retornos, volatilidad, OBV, Bollinger, Stochastic, series de indicadores, forecast ponderado, caché SQLite, normalización ML, y edge cases con datos insuficientes.

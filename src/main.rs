@@ -26,10 +26,10 @@ async fn main() -> Result<()> {
     let config = cli::Config::parse();
     let mut db = Database::open("trade_cache.db")?;
 
-    let data = if config.intraday || config.refresh {
+    let data = if config.refresh {
         fetch_and_store(&config, &mut db).await?
     } else {
-        match db.load_cached(&config.symbol)? {
+        match db.load_cached(&config.symbol, &config.range, &config.interval)? {
             Some(d) => {
                 display::print_source("datos desde cache");
                 d
@@ -64,6 +64,8 @@ async fn fetch_and_store(config: &cli::Config, db: &mut impl PriceRepository) ->
         if let Some(quote) = result.indicators.quote.first() {
             db.store_ohlcv(
                 &config.symbol,
+                &config.range,
+                &config.interval,
                 &result.timestamp,
                 &quote.open,
                 &quote.high,

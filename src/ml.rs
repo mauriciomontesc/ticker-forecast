@@ -116,31 +116,33 @@ pub fn train(dataset: &Dataset) -> Model {
         };
     }
 
-    // Z-score normalization
+    // Train/test split (80/20, preserving temporal order)
+    let split = (n as f64 * TRAIN_SPLIT) as usize;
+    let train_x = &dataset.features[..split];
+    let test_x = &dataset.features[split..];
+    let train_y = &dataset.labels[..split];
+    let test_y = &dataset.labels[split..];
+    let train_n = train_x.len();
+
+    // Z-score normalization (train split only — avoids test-set leakage)
     let mut mean = vec![0.0; n_features];
     let mut std = vec![0.0; n_features];
-    for feat in &dataset.features {
+    for feat in train_x {
         for (j, &v) in feat.iter().enumerate() {
             mean[j] += v;
         }
     }
     for m in mean.iter_mut() {
-        *m /= n as f64;
+        *m /= train_n as f64;
     }
-    for feat in &dataset.features {
+    for feat in train_x {
         for (j, &v) in feat.iter().enumerate() {
             std[j] += (v - mean[j]).powi(2);
         }
     }
     for s in std.iter_mut() {
-        *s = (*s / n as f64).sqrt().max(1e-10);
+        *s = (*s / train_n as f64).sqrt().max(1e-10);
     }
-
-    // Train/test split (80/20, preserving temporal order)
-    let split = (n as f64 * TRAIN_SPLIT) as usize;
-    let (train_x, test_x) = (&dataset.features[..split], &dataset.features[split..]);
-    let (train_y, test_y) = (&dataset.labels[..split], &dataset.labels[split..]);
-    let train_n = train_x.len();
 
     // Normalize train features
     let train_norm: Vec<Vec<f64>> = train_x
@@ -160,7 +162,6 @@ pub fn train(dataset: &Dataset) -> Model {
     // SGD training
     for epoch in 0..EPOCHS {
         let lr = LR_INIT / (1.0 + LR_DECAY * epoch as f64);
-        let mut total_loss = 0.0;
 
         // Shuffle
         let mut indices: Vec<usize> = (0..train_n).collect();
@@ -181,17 +182,6 @@ pub fn train(dataset: &Dataset) -> Model {
                 w[j] -= lr * (err * train_norm[idx][j] + L2_REG * w[j]);
             }
             b -= lr * err;
-
-            let eps = 1e-10;
-            total_loss += if train_y[idx] > 0.5 {
-                -(train_y[idx] * pred.ln().max(eps))
-            } else {
-                -((1.0 - train_y[idx]) * (1.0 - pred + eps).ln())
-            };
-        }
-
-        if epoch % 500 == 0 {
-            let _loss = total_loss / train_n as f64;
         }
     }
 
@@ -274,4 +264,81 @@ pub fn predict_next(data: &PriceData, symbol: &str, repo: Option<&dyn PriceRepos
 
     let feats = latest_features(data)?;
     Some((model.predict(&feats), model.confidence(&feats), model.accuracy))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::PriceData;
+
+    fn make_price_data(n: usize) -> PriceData {
+        PriceData {
+            timestamps: (0..n).map(|i| i as i64).collect(),
+            closes: (0..n)
+                .map(|i| 100.0 + (i as f64).sin() * 5.0 + i as f64 * 0.05)
+                .collect(),
+            highs: (0..n)
+                .map(|i| 100.0 + (i as f64).sin() * 5.0 + i as f64 * 0.05 + 1.0)
+                .collect(),
+            lows: (0..n)
+                .map(|i| 100.0 + (i as f64).sin() * 5.0 + i as f64 * 0.05 - 1.0)
+                .collect(),
+            volume: vec![1000; n],
+        }
+    }
+
+    #[test]
+    fn test_normalization_uses_train_split_only() {
+        let features: Vec<Vec<f64>> = (0..10).map(|i| vec![i as f64]).collect();
+        let labels = vec![0.0; 10];
+        let dataset = Dataset {
+            features,
+            labels,
+            timestamps: vec![],
+        };
+        let model = train(&dataset);
+        // Train split is 8 samples (0..7); mean = 3.5, not 4.5 from full dataset
+        assert!((model.feature_mean[0] - 3.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_build_dataset_feature_count() {
+        let data = make_price_data(100);
+        let dataset = build_dataset(&data);
+        assert!(!dataset.features.is_empty());
+        assert_eq!(dataset.features[0].len(), FEATURE_COUNT);
+        assert_eq!(dataset.labels.len(), dataset.features.len());
+    }
+
+    #[test]
+    fn test_build_dataset_labels_up_when_close_rises() {
+        let n = 100;
+        let data = PriceData {
+            timestamps: (0..n).map(|i| i as i64).collect(),
+            closes: (0..n).map(|i| 100.0 + i as f64).collect(),
+            highs: (0..n).map(|i| 100.0 + i as f64 + 1.0).collect(),
+            lows: (0..n).map(|i| 100.0 + i as f64 - 1.0).collect(),
+            volume: vec![1000; n],
+        };
+        let dataset = build_dataset(&data);
+        assert!(!dataset.labels.is_empty());
+        assert!(dataset.labels.iter().all(|&l| l == 1.0));
+    }
+
+    #[test]
+    fn test_latest_features_returns_thirteen_features() {
+        let data = make_price_data(100);
+        let feats = latest_features(&data).expect("enough data for features");
+        assert_eq!(feats.len(), FEATURE_COUNT);
+    }
+
+    #[test]
+    fn test_train_returns_model_with_matching_weights() {
+        let data = make_price_data(100);
+        let dataset = build_dataset(&data);
+        let model = train(&dataset);
+        assert_eq!(model.weights.len(), FEATURE_COUNT);
+        assert_eq!(model.feature_mean.len(), FEATURE_COUNT);
+        assert_eq!(model.feature_std.len(), FEATURE_COUNT);
+    }
 }
