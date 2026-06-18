@@ -44,6 +44,9 @@ pub fn compute_macd(closes: &[f64]) -> (Option<f64>, Option<f64>) {
     let k12 = 2.0 / 13.0;
     let k26 = 2.0 / 27.0;
     let mut ema12 = closes[..12].iter().sum::<f64>() / 12.0;
+    for &c in closes[12..26].iter() {
+        ema12 = c * k12 + ema12 * (1.0 - k12);
+    }
     let mut ema26 = closes[..26].iter().sum::<f64>() / 26.0;
     for &c in closes[26..].iter() {
         ema12 = c * k12 + ema12 * (1.0 - k12);
@@ -136,6 +139,9 @@ pub fn compute_macd_series(closes: &[f64]) -> (Vec<Option<f64>>, Vec<Option<f64>
     let k12 = 2.0 / 13.0;
     let k26 = 2.0 / 27.0;
     let mut ema12 = closes[..12].iter().sum::<f64>() / 12.0;
+    for &c in closes[12..26].iter() {
+        ema12 = c * k12 + ema12 * (1.0 - k12);
+    }
     let mut ema26 = closes[..26].iter().sum::<f64>() / 26.0;
     for i in 26..n {
         ema12 = closes[i] * k12 + ema12 * (1.0 - k12);
@@ -511,6 +517,27 @@ mod tests {
         assert!(macd.is_some());
         assert!(signal.is_some());
         assert!((macd.unwrap() - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_macd_ema12_warmup() {
+        let closes: Vec<f64> = (0..100)
+            .map(|i| 100.0 + i as f64 * 0.5 + (i as f64 / 3.0).sin() * 2.0)
+            .collect();
+        let k12 = 2.0 / 13.0;
+        let k26 = 2.0 / 27.0;
+        let mut ema12 = closes[..12].iter().sum::<f64>() / 12.0;
+        for &c in &closes[12..26] {
+            ema12 = c * k12 + ema12 * (1.0 - k12);
+        }
+        let mut ema26 = closes[..26].iter().sum::<f64>() / 26.0;
+        for &c in &closes[26..] {
+            ema12 = c * k12 + ema12 * (1.0 - k12);
+            ema26 = c * k26 + ema26 * (1.0 - k26);
+        }
+        let expected = ema12 - ema26;
+        let (macd, _) = compute_macd(&closes);
+        assert!((macd.unwrap() - expected).abs() < 1e-10);
     }
 
     #[test]
