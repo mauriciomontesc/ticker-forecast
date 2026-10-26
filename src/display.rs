@@ -1,20 +1,29 @@
 use tracing::info;
 
-use crate::models::Forecast;
+use crate::models::{Direction, Forecast, ForecastHorizon};
 
 pub fn print_source(source: &str) {
     info!("({source})");
 }
 
-pub fn print_forecast(forecast: &Forecast, symbol: &str) {
-    let s = &forecast.signals;
-    let hist = s.macd_line - s.signal_line;
+/// Prints one report: indicators are listed once and both forecast horizons
+/// (short and long) are shown below them.
+pub fn print_forecasts(
+    short: Option<&Forecast>,
+    long: Option<&Forecast>,
+    symbol: &str,
+    interval: &str,
+) {
+    let Some(reference) = short.or(long) else {
+        return;
+    };
+    let s = &reference.signals;
 
     info!("=== {symbol} ===");
-    info!("Precio: ${:.5}", forecast.latest_price);
+    info!("Precio: ${:.5}", reference.latest_price);
     info!("MACD: {:.5}", s.macd_line);
     info!("Signal: {:.5}", s.signal_line);
-    info!("Histograma: {:.5}", hist);
+    info!("Histograma: {:.5}", s.macd_line - s.signal_line);
     info!("RSI (14): {:.1}", s.rsi);
     info!("ADX (14): {:.1}", s.adx);
     info!("Bollinger %B: {:.3}", s.bollinger_b);
@@ -27,15 +36,30 @@ pub fn print_forecast(forecast: &Forecast, symbol: &str) {
         info!("Resistencia cercana: ${:.5}", res);
     }
 
+    if let Some(forecast) = short {
+        print_horizon(forecast, interval);
+    }
+    if let Some(forecast) = long {
+        print_horizon(forecast, interval);
+    }
+}
+
+fn print_horizon(forecast: &Forecast, interval: &str) {
+    let label = match forecast.horizon {
+        ForecastHorizon::Short => format!("corto plazo (próxima vela de {interval})"),
+        ForecastHorizon::Long => "largo plazo (~1 mes)".to_string(),
+    };
     let direction = match forecast.direction {
-        crate::models::Direction::Bullish => "Subida (Bullish)",
-        crate::models::Direction::Bearish => "Bajada (Bearish)",
-        crate::models::Direction::Neutral => "Neutral",
+        Direction::Bullish => "Subida (Bullish)",
+        Direction::Bearish => "Bajada (Bearish)",
+        Direction::Neutral => "Neutral",
     };
 
-    info!("Pronóstico: {direction} — {}", forecast.strength);
-
+    info!("Pronóstico {label}: {direction} — {}", forecast.strength);
+    if let Some(price) = forecast.projected_price {
+        info!("  Precio proyectado: ${price:.5}");
+    }
     if forecast.ml_used {
-        info!("(incluye voto ponderado de ML)");
+        info!("  (incluye voto ponderado de ML)");
     }
 }

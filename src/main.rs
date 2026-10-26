@@ -47,12 +47,30 @@ async fn main() -> Result<()> {
         db.log_query(&config.symbol, &config.range, &config.interval)?;
     }
 
+    let technical = forecast::technical_signals(&data);
     let ml_result = ml::predict_next(&data, &config.symbol, Some(&db as &dyn PriceRepository));
     let (ml_bullish, ml_accuracy) = ml_result.map(|(d, _c, a)| (d, a)).unzip();
-    match forecast::analyze_with_ml(&data, ml_bullish, ml_accuracy) {
-        Some(result) => display::print_forecast(&result, &config.symbol),
-        None => tracing::error!("No se pudo generar pronóstico: datos insuficientes"),
+
+    let short = forecast::analyze_short(&data, &technical, ml_bullish, ml_accuracy);
+    let long = forecast::analyze_long_term(
+        &data,
+        &technical,
+        forecast::horizon_bars_for(&data, &config.interval),
+    );
+
+    if short.is_none() {
+        tracing::error!("No se pudo generar pronóstico de corto plazo: datos insuficientes");
     }
+    if long.is_none() {
+        tracing::warn!("No se pudo generar pronóstico de largo plazo: datos insuficientes");
+    }
+
+    display::print_forecasts(
+        short.as_ref(),
+        long.as_ref(),
+        &config.symbol,
+        &config.interval,
+    );
 
     Ok(())
 }

@@ -69,7 +69,7 @@ pub async fn fetch(symbol: &str, range: &str, interval: &str) -> Result<ChartRes
     let text = response.text().await?;
 
     if !status.is_success() || text.trim().is_empty() {
-        anyhow::bail!("Yahoo API error {status}");
+        anyhow::bail!("Yahoo API error {status}: {}", text.trim());
     }
 
     Ok(serde_json::from_str(&text)?)

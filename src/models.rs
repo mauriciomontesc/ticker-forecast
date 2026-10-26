@@ -26,6 +26,14 @@ pub enum MlContribution {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ForecastHorizon {
+    /// Next candle (1 period ahead).
+    Short,
+    /// ~1 month ahead.
+    Long,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Direction {
     Bullish,
     Bearish,
@@ -56,4 +64,8 @@ pub struct Forecast {
     pub signals: IndicatorSignals,
     pub latest_price: f64,
     pub ml_used: bool,
+    /// Short (next candle) or long (~1 month) horizon.
+    pub horizon: ForecastHorizon,
+    /// Projected price at the end of the horizon (long-term forecasts only).
+    pub projected_price: Option<f64>,
 }

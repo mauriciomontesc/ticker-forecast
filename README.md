@@ -129,10 +129,23 @@ Ejemplos:
   ticker-forecast --intraday       # EURUSD=X en timeframe 1h
 ```
 
+## Pronóstico a largo plazo
+
+El CLI genera **dos pronósticos** en cada ejecución:
+
+1. **Corto plazo** (próxima vela): voto ponderado de indicadores técnicos + regresión logística (ML).
+2. **Largo plazo** (~1 mes): regresión lineal sobre el **logaritmo** de los closes recientes. El retorno proyectado es `exp(slope × horizonte) − 1`, donde `slope` es el retorno logarítmico medio por vela; se muestra como % y como precio proyectado.
+
+- **Horizonte**: 21 sesiones de trading (~1 mes). Para datos intradía se deriva del ritmo real de las velas (p. ej. forex 24h ≈ 504 velas de 1h; equities 6.5h ≈ 134), con una tabla por intervalo como fallback.
+- **Ventana**: la tendencia se ajusta solo sobre las últimas `3 × horizonte` velas (≈3 meses), no sobre todo el histórico, para no diluir cambios de régimen recientes.
+- **Dirección**: alcista si el retorno proyectado supera ±0.5%; bajista si cae por debajo; en caso contrario `Neutral`.
+- **Datos mínimos**: `max(35, 3 × horizonte)` velas; si no alcanzan, el pronóstico de largo plazo se omite con un warning.
+- **Independiente** del voto del ML de corto plazo; ambos comparten el mismo snapshot de indicadores (se calculan una sola vez).
+
 ## Tests
 
 ```
 cargo test
 ```
 
-39 tests unitarios cubren: MACD, RSI, ADX, ATR, retornos, volatilidad, OBV, Bollinger, Stochastic, series de indicadores, forecast ponderado, caché SQLite, normalización ML, y edge cases con datos insuficientes.
+57 tests unitarios cubren: MACD, RSI, ADX, ATR, retornos, volatilidad, OBV, Bollinger, Stochastic, series de indicadores, forecast ponderado, forecast de largo plazo (log-retornos, ventana reciente, horizonte por intervalo/cadencia), caché SQLite, normalización ML y edge cases con datos insuficientes.
