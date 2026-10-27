@@ -1,6 +1,8 @@
 use tracing::info;
 
-use crate::models::{Direction, Forecast, ForecastHorizon};
+use crate::models::{
+    Direction, Forecast, ForecastHorizon, SignalSide, SignalStats, TradeSignal,
+};
 
 pub fn print_source(source: &str) {
     info!("({source})");
@@ -62,4 +64,54 @@ fn print_horizon(forecast: &Forecast, interval: &str) {
     if forecast.ml_used {
         info!("  (incluye voto ponderado de ML)");
     }
+}
+
+/// Prints the actionable signal: side, entry range and historical hit rate.
+pub fn print_signal(signal: &TradeSignal, stats: &SignalStats) {
+    let horizon = match signal.horizon {
+        ForecastHorizon::Short => "corto plazo",
+        ForecastHorizon::Long => "largo plazo (~1 mes)",
+    };
+    let side = match signal.side {
+        SignalSide::Buy => "Compra (BUY)",
+        SignalSide::Sell => "Venta (SELL)",
+    };
+
+    info!("Señal {horizon}: {side}");
+    info!(
+        "  Entrada: ${:.5} – ${:.5}",
+        signal.entry_low, signal.entry_high
+    );
+    info!("  Referencia: ${:.5}", signal.reference_price);
+
+    match stats.win_rate() {
+        Some(rate) => info!(
+            "  Historial: {}/{} aciertos ({:.0}%)",
+            stats.wins,
+            stats.resolved(),
+            rate * 100.0
+        ),
+        None => info!("  Historial: sin señales resueltas"),
+    }
+    if stats.pending > 0 {
+        info!("  Señales abiertas: {}", stats.pending);
+    }
+    if stats.missed > 0 {
+        info!("  Sin entrada (zona no alcanzada): {}", stats.missed);
+    }
+    if stats.resolved() >= 10 {
+        if let Some(rate) = stats.win_rate() {
+            if rate < 0.45 {
+                info!("  Advertencia: baja fiabilidad histórica");
+            }
+        }
+    }
+}
+
+pub fn print_no_signal(horizon: ForecastHorizon) {
+    let label = match horizon {
+        ForecastHorizon::Short => "corto plazo",
+        ForecastHorizon::Long => "largo plazo (~1 mes)",
+    };
+    info!("Señal {label}: sin señal (pronóstico neutral)");
 }

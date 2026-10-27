@@ -6,13 +6,14 @@ mod forecast;
 mod indicators;
 mod ml;
 mod models;
+mod signal;
 mod traits;
 
 use anyhow::Result;
 
 use crate::db::Database;
 use crate::traits::PriceRepository;
-use models::PriceData;
+use models::{ForecastHorizon, PriceData};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -52,11 +53,8 @@ async fn main() -> Result<()> {
     let (ml_bullish, ml_accuracy) = ml_result.map(|(d, _c, a)| (d, a)).unzip();
 
     let short = forecast::analyze_short(&data, &technical, ml_bullish, ml_accuracy);
-    let long = forecast::analyze_long_term(
-        &data,
-        &technical,
-        forecast::horizon_bars_for(&data, &config.interval),
-    );
+    let long_bars = forecast::horizon_bars_for(&data, &config.interval);
+    let long = forecast::analyze_long_term(&data, &technical, long_bars);
 
     if short.is_none() {
         tracing::error!("No se pudo generar pronóstico de corto plazo: datos insuficientes");
@@ -65,12 +63,47 @@ async fn main() -> Result<()> {
         tracing::warn!("No se pudo generar pronóstico de largo plazo: datos insuficientes");
     }
 
+    // Resolve pending signals with the candles fetched since they were issued.
+    for pending_signal in db.pending_signals(&config.symbol, &config.interval)? {
+        if let Some((outcome, price)) = signal::resolve(&pending_signal, &data) {
+            db.resolve_signal(pending_signal.id, &outcome, price)?;
+        }
+    }
+
+    let short_signal = short.as_ref().and_then(|forecast| {
+        signal::build(&config.symbol, &config.interval, &data, forecast, 1)
+    });
+    let long_signal = long.as_ref().and_then(|forecast| {
+        signal::build(&config.symbol, &config.interval, &data, forecast, long_bars)
+    });
+
+    if let Some(signal) = &short_signal {
+        db.save_signal(signal)?;
+    }
+    if let Some(signal) = &long_signal {
+        db.save_signal(signal)?;
+    }
+
+    let short_stats = db.signal_stats(&config.symbol, &config.interval, ForecastHorizon::Short)?;
+    let long_stats = db.signal_stats(&config.symbol, &config.interval, ForecastHorizon::Long)?;
+
     display::print_forecasts(
         short.as_ref(),
         long.as_ref(),
         &config.symbol,
         &config.interval,
     );
+
+    if let Some(signal) = &short_signal {
+        display::print_signal(signal, &short_stats);
+    } else if short.is_some() {
+        display::print_no_signal(ForecastHorizon::Short);
+    }
+    if let Some(signal) = &long_signal {
+        display::print_signal(signal, &long_stats);
+    } else if long.is_some() {
+        display::print_no_signal(ForecastHorizon::Long);
+    }
 
     Ok(())
 }

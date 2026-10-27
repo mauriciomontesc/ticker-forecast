@@ -6,10 +6,11 @@ CLI tool que combina indicadores técnicos clásicos con regresión logística p
 
 ```
 api.rs        → Fetch OHLCV desde Yahoo Finance
-db.rs         → Caché SQLite + persistencia del modelo ML
+db.rs         → Caché SQLite + persistencia del modelo ML y de las señales
 indicators.rs → Cálculo de indicadores técnicos (MACD, RSI, ADX, ATR, OBV, etc.)
 forecast.rs   → Sistema de votación ponderada + decisión final
 ml.rs         → Regresión logística con SGD + z-score normalization
+signal.rs     → Señales accionables (lado + zona de entrada) y resolución
 display.rs    → Output por consola via tracing
 traits.rs     → Abstracción PriceRepository
 ```
@@ -142,10 +143,22 @@ El CLI genera **dos pronósticos** en cada ejecución:
 - **Datos mínimos**: `max(35, 3 × horizonte)` velas; si no alcanzan, el pronóstico de largo plazo se omite con un warning.
 - **Independiente** del voto del ML de corto plazo; ambos comparten el mismo snapshot de indicadores (se calculan una sola vez).
 
+## Señales de trading
+
+Cada ejecución emite hasta dos señales accionables (corto y largo plazo):
+
+- **Lado**: `Compra (BUY)` si el pronóstico es alcista, `Venta (SELL)` si es bajista; sin señal si es `Neutral`.
+- **Zona de entrada**: banda de `0.5 × ATR(14)` alrededor del precio de referencia. Compra: `[precio − 0.5·ATR, precio]`; Venta: `[precio, precio + 0.5·ATR]`.
+- **Persistencia**: se guardan en SQLite (`trade_signals`) con `reference_ts`, `horizon_bars`, zona de entrada y `outcome` (`pending`/`win`/`loss`/`missed`). Se deduplican por `(symbol, interval, horizon, reference_ts, side)`.
+- **Resolución automática**: en cada ejecución se evalúan las señales pendientes con las velas nuevas:
+  - si el precio no toca la zona antes del vencimiento → `missed`;
+  - si la toca, se asume entrada en el punto medio de la zona y se compara el cierre a `horizon_bars` velas → `win`/`loss`.
+- **Aprendizaje**: el historial (aciertos/fallos y win rate) se recalcula y se muestra junto a cada nueva señal; con ≥10 señales resueltas y win rate < 45% se advierte baja fiabilidad.
+
 ## Tests
 
 ```
 cargo test
 ```
 
-57 tests unitarios cubren: MACD, RSI, ADX, ATR, retornos, volatilidad, OBV, Bollinger, Stochastic, series de indicadores, forecast ponderado, forecast de largo plazo (log-retornos, ventana reciente, horizonte por intervalo/cadencia), caché SQLite, normalización ML y edge cases con datos insuficientes.
+68 tests unitarios cubren: MACD, RSI, ADX, ATR, retornos, volatilidad, OBV, Bollinger, Stochastic, series de indicadores, forecast ponderado, forecast de largo plazo (log-retornos, ventana reciente, horizonte por intervalo/cadencia), señales de trading (lado, zona de entrada, resolución win/loss/missed), persistencia y estadísticas en SQLite, normalización ML y edge cases con datos insuficientes.
